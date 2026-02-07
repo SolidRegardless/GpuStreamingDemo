@@ -30,6 +30,15 @@ var iterations = ParseInt(argsDict.GetValueOrDefault("iters"), 50);
 var warmup = ParseInt(argsDict.GetValueOrDefault("warmup"), 5);
 var taskFilter = argsDict.GetValueOrDefault("task")?.ToLowerInvariant();
 var advanced = argsDict.ContainsKey("advanced");
+var quick = argsDict.ContainsKey("quick");
+
+// In quick mode, override to minimal settings for fast dev iteration
+if (quick)
+{
+    batchSize = ParseInt(argsDict.GetValueOrDefault("batch"), 1 << 16); // 65,536 elements
+    iterations = ParseInt(argsDict.GetValueOrDefault("iters"), 5);
+    warmup = ParseInt(argsDict.GetValueOrDefault("warmup"), 1);
+}
 
 // --- Available tasks ---
 
@@ -53,14 +62,19 @@ IBenchmarkTask[] CreateAdvancedTasks() =>
     new JuliaSetTask()
 ];
 
-IBenchmarkTask[] CreateAllTasks() => advanced ? CreateAdvancedTasks() : CreateStandardTasks();
+IBenchmarkTask[] CreateQuickTask() =>
+[
+    new AffineTransformTask()
+];
+
+IBenchmarkTask[] CreateAllTasks() => quick ? CreateQuickTask() : advanced ? CreateAdvancedTasks() : CreateStandardTasks();
 
 var accelerators = accelArg == AcceleratorKind.Auto
     ? new[] { AcceleratorKind.Cpu, AcceleratorKind.Cuda, AcceleratorKind.OpenCL }
     : new[] { accelArg };
 
 Console.WriteLine();
-Console.WriteLine(advanced ? "=== GPU STREAMING BENCHMARK (ADVANCED) ===" : "=== GPU STREAMING BENCHMARK ===");
+Console.WriteLine(quick ? "=== GPU STREAMING BENCHMARK (QUICK) ===" : advanced ? "=== GPU STREAMING BENCHMARK (ADVANCED) ===" : "=== GPU STREAMING BENCHMARK ===");
 Console.WriteLine($"Batch size : {batchSize:N0} elements");
 Console.WriteLine($"Iterations : {iterations}");
 Console.WriteLine($"Warmup     : {warmup}");
