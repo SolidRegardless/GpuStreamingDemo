@@ -319,6 +319,12 @@ dotnet run -- --task sha256
 # CPU only
 dotnet run -- --accel cpu
 
+# Quick smoke test (single kernel, minimal iterations)
+dotnet run -- --quick
+
+# Quick mode with specific accelerator
+dotnet run -- --quick --accel cuda
+
 # Go big
 dotnet run -- --batch 4194304 --iters 100
 ```
@@ -612,6 +618,7 @@ dotnet run --project src/GpuStreamingDemo.App -- --accel cuda --task sha256 --it
 | `--iters` | `50` | Measured iterations |
 | `--warmup` | `5` | Warmup iterations |
 | `--task` | *(all)* | Filter to specific task name |
+| `--quick` | *(off)* | Quick mode: runs only AffineTransform with reduced batch (65K), 5 iterations, 1 warmup — ideal for fast dev/test cycles |
 
 ---
 
