@@ -29,10 +29,11 @@ var batchSize = ParseInt(argsDict.GetValueOrDefault("batch"), 1 << 20);
 var iterations = ParseInt(argsDict.GetValueOrDefault("iters"), 50);
 var warmup = ParseInt(argsDict.GetValueOrDefault("warmup"), 5);
 var taskFilter = argsDict.GetValueOrDefault("task")?.ToLowerInvariant();
+var advanced = argsDict.ContainsKey("advanced");
 
 // --- Available tasks ---
 
-IBenchmarkTask[] CreateAllTasks() =>
+IBenchmarkTask[] CreateStandardTasks() =>
 [
     new AffineTransformTask(),
     new VectorAddTask(),
@@ -41,12 +42,25 @@ IBenchmarkTask[] CreateAllTasks() =>
     new MandelbrotTask()
 ];
 
+IBenchmarkTask[] CreateAdvancedTasks() =>
+[
+    new MonteCarloTask(),
+    new FirFilterTask(),
+    new GaussianBlurTask(),
+    new BatchNormReluTask(),
+    new NBodyTask(),
+    new AesCryptoTask(),
+    new JuliaSetTask()
+];
+
+IBenchmarkTask[] CreateAllTasks() => advanced ? CreateAdvancedTasks() : CreateStandardTasks();
+
 var accelerators = accelArg == AcceleratorKind.Auto
     ? new[] { AcceleratorKind.Cpu, AcceleratorKind.Cuda, AcceleratorKind.OpenCL }
     : new[] { accelArg };
 
 Console.WriteLine();
-Console.WriteLine("=== GPU STREAMING BENCHMARK ===");
+Console.WriteLine(advanced ? "=== GPU STREAMING BENCHMARK (ADVANCED) ===" : "=== GPU STREAMING BENCHMARK ===");
 Console.WriteLine($"Batch size : {batchSize:N0} elements");
 Console.WriteLine($"Iterations : {iterations}");
 Console.WriteLine($"Warmup     : {warmup}");

@@ -1,4 +1,5 @@
 using ILGPU;
+using ILGPU.Algorithms;
 using ILGPU.Runtime;
 
 namespace GpuStreamingDemo.Core;
@@ -165,6 +166,272 @@ public static class Kernels
         hashes[hashOff + 5] = h5 + f;
         hashes[hashOff + 6] = h6 + g;
         hashes[hashOff + 7] = h7 + h;
+    }
+
+    // ========================
+    // ADVANCED KERNELS
+    // ========================
+
+    /// <summary>
+    /// Monte-Carlo Pi estimation kernel. Each thread runs a batch of random trials using
+    /// a simple LCG PRNG seeded from the thread index, counting how many points fall inside
+    /// the unit circle.
+    /// </summary>
+    /// <param name="index">Thread index.</param>
+    /// <param name="output">Output array: number of hits (inside circle) per thread.</param>
+    /// <param name="trialsPerThread">Number of random (x,y) pairs each thread evaluates.</param>
+    public static void MonteCarloPi(
+        Index1D index,
+        ArrayView<int> output,
+        int trialsPerThread)
+    {
+        // Simple LCG PRNG (constants from Numerical Recipes)
+        uint state = (uint)(index * 1099087573 + 2654435761);
+        int hits = 0;
+
+        for (int t = 0; t < trialsPerThread; t++)
+        {
+            state = state * 1664525 + 1013904223;
+            float x = (state & 0xFFFF) / 65535.0f;
+            state = state * 1664525 + 1013904223;
+            float y = (state & 0xFFFF) / 65535.0f;
+
+            if (x * x + y * y <= 1.0f)
+                hits++;
+        }
+
+        output[index] = hits;
+    }
+
+    /// <summary>
+    /// FIR (Finite Impulse Response) filter kernel. Each output sample is the weighted sum of
+    /// a window of input samples convolved with filter coefficients.
+    /// </summary>
+    /// <param name="index">Thread index (output sample index).</param>
+    /// <param name="input">Input signal array.</param>
+    /// <param name="coeffs">Filter coefficients (tap weights).</param>
+    /// <param name="output">Filtered output array.</param>
+    /// <param name="numTaps">Number of filter taps.</param>
+    public static void FirFilter(
+        Index1D index,
+        ArrayView<float> input,
+        ArrayView<float> coeffs,
+        ArrayView<float> output,
+        int numTaps)
+    {
+        float acc = 0.0f;
+        for (int k = 0; k < numTaps; k++)
+        {
+            int srcIdx = index - k;
+            if (srcIdx >= 0)
+                acc += input[srcIdx] * coeffs[k];
+        }
+        output[index] = acc;
+    }
+
+    /// <summary>
+    /// 2D Gaussian blur kernel (separable, horizontal pass for simplicity).
+    /// Each pixel is the weighted average of its horizontal neighbours using a Gaussian kernel.
+    /// </summary>
+    /// <param name="index">Thread index (pixel index in row-major order).</param>
+    /// <param name="input">Input image (single channel, float).</param>
+    /// <param name="output">Blurred output image.</param>
+    /// <param name="width">Image width in pixels.</param>
+    /// <param name="radius">Blur kernel radius (kernel size = 2*radius+1).</param>
+    public static void GaussianBlur(
+        Index1D index,
+        ArrayView<float> input,
+        ArrayView<float> output,
+        int width,
+        int radius)
+    {
+        int px = index % width;
+        float sigma = radius / 3.0f;
+        float sum = 0.0f;
+        float wSum = 0.0f;
+
+        for (int dx = -radius; dx <= radius; dx++)
+        {
+            int sx = px + dx;
+            if (sx < 0 || sx >= width) continue;
+
+            int srcIdx = index - px + sx; // same row, shifted column
+            if (srcIdx < 0 || srcIdx >= input.Length) continue;
+
+            // Approximate Gaussian weight using a polynomial approximation of exp(-x)
+            float t = (dx * dx) / (2.0f * sigma * sigma);
+            // exp(-t) ≈ 1/(1+t+t²/2+t³/6) — good enough for a blur weight
+            float w = 1.0f / (1.0f + t + t * t * 0.5f + t * t * t * 0.166667f);
+            sum += input[srcIdx] * w;
+            wSum += w;
+        }
+
+        output[index] = sum / wSum;
+    }
+
+    /// <summary>
+    /// Batched ReLU + batch-normalisation-style kernel simulating an AI inference layer.
+    /// Computes: output[i] = max(0, (input[i] - mean) / sqrt(variance + epsilon)) * gamma + beta
+    /// </summary>
+    /// <param name="index">Thread index.</param>
+    /// <param name="input">Input activations.</param>
+    /// <param name="output">Output activations.</param>
+    /// <param name="mean">Channel mean.</param>
+    /// <param name="variance">Channel variance.</param>
+    /// <param name="gamma">Scale parameter.</param>
+    /// <param name="beta">Shift parameter.</param>
+    public static void BatchNormRelu(
+        Index1D index,
+        ArrayView<float> input,
+        ArrayView<float> output,
+        float mean,
+        float variance,
+        float gamma,
+        float beta)
+    {
+        if (index >= input.Length) return;
+        float normalized = (input[index] - mean) / XMath.Sqrt(variance + 1e-5f);
+        float scaled = normalized * gamma + beta;
+        output[index] = scaled > 0.0f ? scaled : 0.0f; // ReLU
+    }
+
+    /// <summary>
+    /// N-body gravitational simulation step kernel. Each thread computes the net gravitational
+    /// force on one body from all other bodies (O(n²) brute-force, the GPU way).
+    /// Positions are stored as (x,y) pairs, velocities as (vx,vy) pairs.
+    /// </summary>
+    /// <param name="index">Thread index (body index).</param>
+    /// <param name="positionsIn">Current positions, 2 floats per body (x,y).</param>
+    /// <param name="velocitiesIn">Current velocities, 2 floats per body (vx,vy).</param>
+    /// <param name="positionsOut">Updated positions.</param>
+    /// <param name="velocitiesOut">Updated velocities.</param>
+    /// <param name="numBodies">Total number of bodies.</param>
+    /// <param name="dt">Time step.</param>
+    public static void NBody(
+        Index1D index,
+        ArrayView<float> positionsIn,
+        ArrayView<float> velocitiesIn,
+        ArrayView<float> positionsOut,
+        ArrayView<float> velocitiesOut,
+        int numBodies,
+        float dt)
+    {
+        if (index >= numBodies) return;
+
+        float px = positionsIn[index * 2];
+        float py = positionsIn[index * 2 + 1];
+        float ax = 0.0f, ay = 0.0f;
+
+        const float G = 1.0f;
+        const float softening = 0.01f;
+
+        for (int j = 0; j < numBodies; j++)
+        {
+            if (j == index) continue;
+            float dx = positionsIn[j * 2] - px;
+            float dy = positionsIn[j * 2 + 1] - py;
+            float distSq = dx * dx + dy * dy + softening;
+            float invDist = 1.0f / XMath.Sqrt(distSq);
+            float invDist3 = invDist * invDist * invDist;
+            ax += G * dx * invDist3;
+            ay += G * dy * invDist3;
+        }
+
+        float vx = velocitiesIn[index * 2] + ax * dt;
+        float vy = velocitiesIn[index * 2 + 1] + ay * dt;
+        velocitiesOut[index * 2] = vx;
+        velocitiesOut[index * 2 + 1] = vy;
+        positionsOut[index * 2] = px + vx * dt;
+        positionsOut[index * 2 + 1] = py + vy * dt;
+    }
+
+    /// <summary>
+    /// AES SubBytes + ShiftRows simulation kernel. Applies the AES S-box substitution
+    /// to each byte of a 16-byte block, then performs the ShiftRows permutation.
+    /// Operates on uint (4 bytes packed) for GPU-friendly access.
+    /// </summary>
+    /// <param name="index">Thread index (block index).</param>
+    /// <param name="data">Data array, 4 uints (16 bytes) per block.</param>
+    /// <param name="sbox">The 256-byte AES S-box lookup table.</param>
+    /// <param name="rounds">Number of rounds to apply.</param>
+    public static void AesSubBytesShiftRows(
+        Index1D index,
+        ArrayView<uint> data,
+        ArrayView<byte> sbox,
+        int rounds)
+    {
+        int off = index * 4;
+
+        for (int r = 0; r < rounds; r++)
+        {
+            // SubBytes: apply S-box to each byte
+            for (int w = 0; w < 4; w++)
+            {
+                uint val = data[off + w];
+                uint b0 = sbox[(int)(val & 0xFF)];
+                uint b1 = sbox[(int)((val >> 8) & 0xFF)];
+                uint b2 = sbox[(int)((val >> 16) & 0xFF)];
+                uint b3 = sbox[(int)((val >> 24) & 0xFF)];
+                data[off + w] = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+            }
+
+            // ShiftRows: treat the 4 uints as a 4x4 byte matrix (column-major)
+            // Row 1: shift left by 1
+            // Row 2: shift left by 2
+            // Row 3: shift left by 3
+            // We extract rows, rotate, and put back
+            uint c0 = data[off], c1 = data[off + 1], c2 = data[off + 2], c3 = data[off + 3];
+
+            // Row 0: bytes at positions [0,0],[0,1],[0,2],[0,3] = no shift
+            // Row 1: bytes at bit 8-15 of each column, shift left by 1
+            uint r1_0 = (c1 >> 8) & 0xFF, r1_1 = (c2 >> 8) & 0xFF, r1_2 = (c3 >> 8) & 0xFF, r1_3 = (c0 >> 8) & 0xFF;
+            // Row 2: bytes at bit 16-23, shift left by 2
+            uint r2_0 = (c2 >> 16) & 0xFF, r2_1 = (c3 >> 16) & 0xFF, r2_2 = (c0 >> 16) & 0xFF, r2_3 = (c1 >> 16) & 0xFF;
+            // Row 3: bytes at bit 24-31, shift left by 3
+            uint r3_0 = (c3 >> 24) & 0xFF, r3_1 = (c0 >> 24) & 0xFF, r3_2 = (c1 >> 24) & 0xFF, r3_3 = (c2 >> 24) & 0xFF;
+
+            data[off + 0] = (c0 & 0xFF) | (r1_0 << 8) | (r2_0 << 16) | (r3_0 << 24);
+            data[off + 1] = (c1 & 0xFF) | (r1_1 << 8) | (r2_1 << 16) | (r3_1 << 24);
+            data[off + 2] = (c2 & 0xFF) | (r1_2 << 8) | (r2_2 << 16) | (r3_2 << 24);
+            data[off + 3] = (c3 & 0xFF) | (r1_3 << 8) | (r2_3 << 16) | (r3_3 << 24);
+        }
+    }
+
+    /// <summary>
+    /// Julia set kernel. Similar to Mandelbrot but uses a fixed complex constant c,
+    /// iterating z = z² + c for each pixel as the initial z value.
+    /// </summary>
+    /// <param name="index">Thread index (pixel index).</param>
+    /// <param name="output">Output array of iteration counts.</param>
+    /// <param name="width">Image width.</param>
+    /// <param name="maxIter">Maximum iterations.</param>
+    /// <param name="cReal">Real part of the Julia constant.</param>
+    /// <param name="cImag">Imaginary part of the Julia constant.</param>
+    public static void JuliaSet(
+        Index1D index,
+        ArrayView<int> output,
+        int width,
+        int maxIter,
+        float cReal,
+        float cImag)
+    {
+        int px = index % width;
+        int py = index / width;
+        int height = (int)(output.Length / width);
+
+        float x = (px / (float)width) * 4.0f - 2.0f;   // [-2, 2]
+        float y = (py / (float)height) * 4.0f - 2.0f;   // [-2, 2]
+
+        int iter = 0;
+        while (x * x + y * y <= 4.0f && iter < maxIter)
+        {
+            float xtemp = x * x - y * y + cReal;
+            y = 2.0f * x * y + cImag;
+            x = xtemp;
+            iter++;
+        }
+
+        output[index] = iter;
     }
 
     /// <summary>
