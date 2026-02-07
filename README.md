@@ -325,6 +325,12 @@ dotnet run -- --double-buffer --task affine --accel cuda
 # Double-buffered with large batch (more visible overlap)
 dotnet run -- --double-buffer --task affine --accel cuda --batch 16777216
 
+# Quick smoke test (single kernel, minimal iterations)
+dotnet run -- --quick
+
+# Quick mode with specific accelerator
+dotnet run -- --quick --accel cuda
+
 # Go big
 dotnet run -- --batch 4194304 --iters 100
 ```
@@ -619,6 +625,7 @@ dotnet run --project src/GpuStreamingDemo.App -- --accel cuda --task sha256 --it
 | `--warmup` | `5` | Warmup iterations |
 | `--task` | *(all)* | Filter to specific task name |
 | `--double-buffer` | *(off)* | Enable double-buffered async overlap mode. Uses two alternating device buffers on separate ILGPU streams to overlap H2D transfers with kernel execution. Reports speedup vs single-buffered baseline and overlap percentage. Currently supported by: AffineTransform |
+| `--quick` | *(off)* | Quick mode: runs only AffineTransform with reduced batch (65K), 5 iterations, 1 warmup — ideal for fast dev/test cycles |
 
 ---
 
