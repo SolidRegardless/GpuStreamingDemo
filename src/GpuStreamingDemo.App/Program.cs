@@ -30,6 +30,7 @@ var iterations = ParseInt(argsDict.GetValueOrDefault("iters"), 50);
 var warmup = ParseInt(argsDict.GetValueOrDefault("warmup"), 5);
 var taskFilter = argsDict.GetValueOrDefault("task")?.ToLowerInvariant();
 var advanced = argsDict.ContainsKey("advanced");
+var doubleBuffer = argsDict.ContainsKey("double-buffer");
 
 // --- Available tasks ---
 
@@ -60,15 +61,21 @@ var accelerators = accelArg == AcceleratorKind.Auto
     : new[] { accelArg };
 
 Console.WriteLine();
-Console.WriteLine(advanced ? "=== GPU STREAMING BENCHMARK (ADVANCED) ===" : "=== GPU STREAMING BENCHMARK ===");
+var modeLabel = doubleBuffer ? "=== GPU STREAMING BENCHMARK (DOUBLE-BUFFERED) ===" :
+                advanced ? "=== GPU STREAMING BENCHMARK (ADVANCED) ===" :
+                "=== GPU STREAMING BENCHMARK ===";
+Console.WriteLine(modeLabel);
 Console.WriteLine($"Batch size : {batchSize:N0} elements");
 Console.WriteLine($"Iterations : {iterations}");
 Console.WriteLine($"Warmup     : {warmup}");
 if (taskFilter != null)
     Console.WriteLine($"Task filter: {taskFilter}");
+if (doubleBuffer)
+    Console.WriteLine("Mode       : Double-buffered (async overlap)");
 Console.WriteLine();
 
 var results = new List<BenchmarkResult>();
+var doubleBufferedResults = new List<DoubleBufferedResult>();
 
 foreach (var accel in accelerators)
 {
@@ -81,9 +88,18 @@ foreach (var accel in accelerators)
 
             try
             {
-                Console.WriteLine($"Running {task.Name} on {accel}...");
-                var result = GpuBenchmarkRunner.Run(task, accel, batchSize, iterations, warmup);
-                results.Add(result);
+                if (doubleBuffer && task is IDoubleBufferedTask dbTask)
+                {
+                    Console.WriteLine($"Running {task.Name} on {accel} (double-buffered)...");
+                    var result = DoubleBufferedBenchmarkRunner.Run(dbTask, accel, batchSize, iterations, warmup);
+                    doubleBufferedResults.Add(result);
+                }
+                else
+                {
+                    Console.WriteLine($"Running {task.Name} on {accel}...");
+                    var result = GpuBenchmarkRunner.Run(task, accel, batchSize, iterations, warmup);
+                    results.Add(result);
+                }
             }
             catch (Exception ex)
             {
@@ -99,14 +115,31 @@ Console.WriteLine();
 Console.WriteLine("=== RESULTS ===");
 Console.WriteLine();
 
-var hdr = $"{"Task",-20} {"Accel",-8} {"Avg (ms)",10} {"P95 (ms)",10} {"Throughput",16}";
-Console.WriteLine(hdr);
-Console.WriteLine(new string('-', hdr.Length));
-
-foreach (var r in results)
+if (results.Count > 0)
 {
-    Console.WriteLine(
-        $"{r.TaskName,-20} {r.Accelerator,-8} {r.AvgLatencyMs,10:F2} {r.P95LatencyMs,10:F2} {r.ThroughputElementsPerSec / 1_000_000,13:F2} M/s");
+    var hdr = $"{"Task",-20} {"Accel",-8} {"Avg (ms)",10} {"P95 (ms)",10} {"Throughput",16}";
+    Console.WriteLine(hdr);
+    Console.WriteLine(new string('-', hdr.Length));
+
+    foreach (var r in results)
+    {
+        Console.WriteLine(
+            $"{r.TaskName,-20} {r.Accelerator,-8} {r.AvgLatencyMs,10:F2} {r.P95LatencyMs,10:F2} {r.ThroughputElementsPerSec / 1_000_000,13:F2} M/s");
+    }
+}
+
+if (doubleBufferedResults.Count > 0)
+{
+    Console.WriteLine();
+    var dbHdr = $"{"Task",-25} {"Accel",-8} {"Avg (ms)",10} {"P95 (ms)",10} {"Throughput",16} {"1xBuf (ms)",12} {"Speedup",9} {"Overlap",9}";
+    Console.WriteLine(dbHdr);
+    Console.WriteLine(new string('-', dbHdr.Length));
+
+    foreach (var r in doubleBufferedResults)
+    {
+        Console.WriteLine(
+            $"{r.TaskName,-25} {r.Accelerator,-8} {r.AvgLatencyMs,10:F2} {r.P95LatencyMs,10:F2} {r.ThroughputElementsPerSec / 1_000_000,13:F2} M/s {r.SingleBufferAvgMs,10:F2}ms {r.SpeedupFactor,8:F2}x {r.OverlapPercentage,7:F1}%");
+    }
 }
 
 Console.WriteLine();
