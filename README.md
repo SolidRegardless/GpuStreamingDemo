@@ -119,6 +119,26 @@ Key idea:
 
 Every task is self-contained. Every accelerator is interchangeable. The runner doesn't care what you're computing — it just times it and judges you silently.
 
+### Device Enumeration Flow
+
+```mermaid
+flowchart TD
+    Start["CLI Entry"] --> LD{"--list-devices?"}
+    LD -->|Yes| Enum["EnumerateDevices()"]
+    Enum --> Print["Display device table"] --> Exit["Exit"]
+    LD -->|No| DI{"--device N?"}
+    DI -->|Yes| Single["CreateByIndex(N)"]
+    Single --> RunDev["Run tasks on device"]
+    DI -->|No| Accel{"--accel all?"}
+    Accel -->|Yes| All["EnumerateDevices()"]
+    All --> Loop["For each device → CreateByIndex(i)"]
+    Loop --> RunDev
+    Accel -->|No| Legacy["Create(kind)"]
+    Legacy --> RunKind["Run tasks on accel type"]
+    RunDev --> Results["Display results"]
+    RunKind --> Results
+```
+
 ### Pluggable Task Architecture
 
 ```mermaid
@@ -313,6 +333,12 @@ If you skip warmup, you're benchmarking your compiler, not your code. Don't be t
 ```bash
 dotnet run -- --accel all --batch 1048576 --iters 50 --warmup 5
 
+# List all available compute devices
+dotnet run -- --list-devices
+
+# Target a specific device by index
+dotnet run -- --device 0 --task sha256
+
 # Filter to a specific task
 dotnet run -- --task sha256
 
@@ -328,12 +354,33 @@ dotnet run -- --double-buffer --task affine --accel cuda --batch 16777216
 # Quick smoke test (single kernel, minimal iterations)
 dotnet run -- --quick
 
-# Quick mode with specific accelerator
-dotnet run -- --quick --accel cuda
+# Quick mode on a specific device
+dotnet run -- --quick --device 2
 
 # Go big
 dotnet run -- --batch 4194304 --iters 100
 ```
+
+### Device Enumeration
+
+Use `--list-devices` to discover all available compute devices:
+
+```
+=== AVAILABLE DEVICES ===
+
+Index   Type     Name                                          Memory          Compute Cap
+------------------------------------------------------------------------------------------
+0       CPU      AMD Ryzen 9 3900X 12-Core Processor           N/A                       —
+1       Cuda     NVIDIA GeForce RTX 4070 Ti                    12282 MB         SM_89
+2       OpenCL   NVIDIA GeForce RTX 4070 Ti                    12282 MB                  —
+3       OpenCL   Intel(R) UHD Graphics 770                     16077 MB                  —
+
+Total: 4 device(s)
+
+Use --device <index> to target a specific device.
+```
+
+Use `--device <index>` to benchmark a specific device. When `--accel all` is used (the default), the runner now iterates over **every** discovered device individually rather than picking one device per type.
 
 ---
 
@@ -433,18 +480,18 @@ In our benchmarks, we include the full transfer cost. No cheating. No "kernel-on
 ### Full Results Table
 
 ```
-Task                 Accel      Avg (ms)   P95 (ms)       Throughput
---------------------------------------------------------------------
-AffineTransform      Cpu          177.40     237.18          5.91 M/s
-VectorAdd            Cpu          126.38     184.06          8.30 M/s
-Saxpy                Cpu          118.52     131.26          8.85 M/s
-SHA256               Cpu          839.06    1151.37          1.25 M/s
-Mandelbrot           Cpu          493.25     514.17          2.13 M/s
-AffineTransform      Cuda           0.02       0.05      57065.36 M/s
-VectorAdd            Cuda           0.02       0.07      54330.36 M/s
-Saxpy                Cuda           0.37       0.39       2870.81 M/s
-SHA256               Cuda           0.27       0.55       3901.68 M/s
-Mandelbrot           Cuda           0.17       0.18       6048.02 M/s
+Task                 Accel    Device                         Avg (ms)   P95 (ms)       Throughput
+-------------------------------------------------------------------------------------------------
+AffineTransform      Cpu      AMD Ryzen 9 3900X 12-Core ..     177.40     237.18          5.91 M/s
+VectorAdd            Cpu      AMD Ryzen 9 3900X 12-Core ..     126.38     184.06          8.30 M/s
+Saxpy                Cpu      AMD Ryzen 9 3900X 12-Core ..     118.52     131.26          8.85 M/s
+SHA256               Cpu      AMD Ryzen 9 3900X 12-Core ..     839.06    1151.37          1.25 M/s
+Mandelbrot           Cpu      AMD Ryzen 9 3900X 12-Core ..     493.25     514.17          2.13 M/s
+AffineTransform      Cuda     NVIDIA GeForce RTX 4070 Ti        0.02       0.05      57065.36 M/s
+VectorAdd            Cuda     NVIDIA GeForce RTX 4070 Ti        0.02       0.07      54330.36 M/s
+Saxpy                Cuda     NVIDIA GeForce RTX 4070 Ti        0.37       0.39       2870.81 M/s
+SHA256               Cuda     NVIDIA GeForce RTX 4070 Ti        0.27       0.55       3901.68 M/s
+Mandelbrot           Cuda     NVIDIA GeForce RTX 4070 Ti        0.17       0.18       6048.02 M/s
 ```
 
 ### The Speedup (Brace Yourself)
@@ -573,9 +620,9 @@ GpuStreamingDemo/
     │   └── Program.cs                    # CLI entry point
     └── GpuStreamingDemo.Core/
         ├── GpuStreamingDemo.Core.csproj
-        ├── AcceleratorFactory.cs          # Hardware abstraction
-        ├── BenchmarkResult.cs             # Result record
-        ├── BenchmarkRunner.cs             # Pluggable harness
+        ├── AcceleratorFactory.cs          # Hardware abstraction & device enumeration
+        ├── BenchmarkResult.cs             # Result record (incl. device name)
+        ├── BenchmarkRunner.cs             # Pluggable harness (per-device & per-type)
         ├── GpuComputeEngine.cs            # Compute engine (streaming)
         ├── IBenchmarkTask.cs              # Task interface (SOLID)
         ├── Kernels.cs                     # All GPU kernels
@@ -624,6 +671,8 @@ dotnet run --project src/GpuStreamingDemo.App -- --accel cuda --task sha256 --it
 | `--iters` | `50` | Measured iterations |
 | `--warmup` | `5` | Warmup iterations |
 | `--task` | *(all)* | Filter to specific task name |
+| `--list-devices` | *(off)* | Enumerate all available compute devices and exit. Shows index, name, type, memory, and compute capability for each device |
+| `--device` | *(none)* | Target a specific device by index (from `--list-devices` output). Overrides `--accel` |
 | `--double-buffer` | *(off)* | Enable double-buffered async overlap mode. Uses two alternating device buffers on separate ILGPU streams to overlap H2D transfers with kernel execution. Reports speedup vs single-buffered baseline and overlap percentage. Currently supported by: AffineTransform |
 | `--quick` | *(off)* | Quick mode: runs only AffineTransform with reduced batch (65K), 5 iterations, 1 warmup — ideal for fast dev/test cycles |
 

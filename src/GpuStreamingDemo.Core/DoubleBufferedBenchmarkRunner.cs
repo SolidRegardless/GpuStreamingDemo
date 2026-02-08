@@ -8,6 +8,7 @@ namespace GpuStreamingDemo.Core;
 /// </summary>
 /// <param name="TaskName">The name of the benchmark task.</param>
 /// <param name="Accelerator">The accelerator type used.</param>
+/// <param name="DeviceName">The specific device name (e.g. "NVIDIA GeForce RTX 4070 Ti").</param>
 /// <param name="BatchSize">Elements per batch.</param>
 /// <param name="Iterations">Number of timed iterations.</param>
 /// <param name="AvgLatencyMs">Average latency per iteration in milliseconds.</param>
@@ -19,6 +20,7 @@ namespace GpuStreamingDemo.Core;
 public sealed record DoubleBufferedResult(
     string TaskName,
     AcceleratorKind Accelerator,
+    string DeviceName,
     int BatchSize,
     int Iterations,
     double AvgLatencyMs,
@@ -163,6 +165,7 @@ public static class DoubleBufferedBenchmarkRunner
             return new DoubleBufferedResult(
                 task.Name + " (2xBuf)",
                 acceleratorKind,
+                accelerator.Name,
                 batchSize,
                 iterations,
                 doubleAvgMs,
