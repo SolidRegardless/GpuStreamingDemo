@@ -1,3 +1,5 @@
+![GPU Health Monitor Banner](banner.png)
+
 # 🔥 C# on the GPU: When Performance Stops Being About Code (and Starts Being About Physics)
 
 > *Or: how I stopped micro-optimising loops, learned to love the GPU, and accidentally made my CPU cry.*
